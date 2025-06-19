@@ -1,0 +1,6 @@
+langchain
+langgraph
+openai
+flask
+qdrant-client
+sqlite3

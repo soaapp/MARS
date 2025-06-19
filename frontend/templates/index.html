@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MARS - Multi-Agent RAG System</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px 5px 0 0;
+        }
+        .chat-container {
+            flex: 1;
+            background-color: white;
+            border-radius: 0 0 5px 5px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-history {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 500px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 5px;
+            max-width: 80%;
+        }
+        .user-message {
+            background-color: #3498db;
+            color: white;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+        .assistant-message {
+            background-color: #ecf0f1;
+            color: #2c3e50;
+            align-self: flex-start;
+        }
+        .input-container {
+            display: flex;
+            padding: 15px;
+            border-top: 1px solid #ecf0f1;
+        }
+        #message-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        #send-button {
+            padding: 10px 20px;
+            background-color: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            margin-left: 10px;
+            cursor: pointer;
+        }
+        #send-button:hover {
+            background-color: #34495e;
+        }
+        .clear-button {
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 0;
+            align-self: flex-end;
+        }
+        .clear-button:hover {
+            background-color: #c0392b;
+        }
+        .system-info {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .thinking {
+            font-style: italic;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>MARS</h1>
+            <p>Multi-Agent RAG System</p>
+        </div>
+        <div class="chat-container">
+            <div class="chat-history" id="chat-history">
+                <div class="message assistant-message">
+                    Hello! I'm MARS, your Multi-Agent RAG System. How can I help you today?
+                </div>
+            </div>
+            <div class="input-container">
+                <input type="text" id="message-input" placeholder="Type your message here..." autocomplete="off">
+                <button id="send-button">Send</button>
+            </div>
+            <button class="clear-button" id="clear-button">Clear Chat</button>
+        </div>
+        <div class="system-info">
+            <p>MARS uses a multi-agent system with Qdrant and SQL database integration.</p>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const chatHistory = document.getElementById('chat-history');
+            const messageInput = document.getElementById('message-input');
+            const sendButton = document.getElementById('send-button');
+            const clearButton = document.getElementById('clear-button');
+
+            // Load chat history on page load
+            fetch('/history')
+                .then(response => response.json())
+                .then(data => {
+                    data.forEach(message => {
+                        addMessage(message.content, message.role);
+                    });
+                });
+
+            // Send message when send button is clicked
+            sendButton.addEventListener('click', sendMessage);
+
+            // Send message when Enter key is pressed
+            messageInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+
+            // Clear chat history
+            clearButton.addEventListener('click', function() {
+                fetch('/clear_history', {
+                    method: 'POST',
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        chatHistory.innerHTML = '';
+                        addMessage('Hello! I\'m MARS, your Multi-Agent RAG System. How can I help you today?', 'assistant');
+                    }
+                });
+            });
+
+            function sendMessage() {
+                const message = messageInput.value.trim();
+                if (!message) return;
+
+                // Add user message to chat
+                addMessage(message, 'user');
+                messageInput.value = '';
+
+                // Add "thinking" message
+                const thinkingId = 'thinking-' + Date.now();
+                addThinkingMessage(thinkingId);
+
+                // Send message to server
+                fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: message }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Remove thinking message
+                    const thinkingElement = document.getElementById(thinkingId);
+                    if (thinkingElement) {
+                        thinkingElement.remove();
+                    }
+                    
+                    // Add assistant response
+                    addMessage(data.response, 'assistant');
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    // Remove thinking message
+                    const thinkingElement = document.getElementById(thinkingId);
+                    if (thinkingElement) {
+                        thinkingElement.remove();
+                    }
+                    addMessage('Sorry, there was an error processing your request.', 'assistant');
+                });
+            }
+
+            function addMessage(content, role) {
+                const messageElement = document.createElement('div');
+                messageElement.classList.add('message');
+                messageElement.classList.add(role === 'user' ? 'user-message' : 'assistant-message');
+                messageElement.textContent = content;
+                chatHistory.appendChild(messageElement);
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+
+            function addThinkingMessage(id) {
+                const messageElement = document.createElement('div');
+                messageElement.id = id;
+                messageElement.classList.add('message', 'assistant-message', 'thinking');
+                messageElement.textContent = 'Thinking...';
+                chatHistory.appendChild(messageElement);
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+        });
+    </script>
+</body>
+</html>
