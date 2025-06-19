@@ -1,11 +1,20 @@
 import os
 import sys
+import time
+import logging
 import sqlite3
 from typing import List, Dict, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_ollama import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('MARS')
 
 # Path to the SQLite database
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'db', 'mock_data.db')
@@ -70,7 +79,11 @@ def create_sql_agent():
         if messages is None:
             messages = []
         
+        logger.info(f"SQL Agent processing query: {query}")
+        start_time = time.time()
+        
         # Generate SQL query
+        sql_generation_start = time.time()
         sql_query = sql_chain.invoke({"query": query, "messages": messages})
         
         # Extract the SQL query from the response (assuming it's wrapped in ```sql ... ```)
@@ -79,22 +92,35 @@ def create_sql_agent():
         elif "```" in sql_query:
             sql_query = sql_query.split("```")[1].split("```")[0].strip()
         
-        # Execute the query
-        results = execute_sql_query(sql_query)
+        sql_generation_end = time.time()
+        logger.info(f"Generated SQL query in {sql_generation_end - sql_generation_start:.2f} seconds: {sql_query}")
         
-        # Format the results
-        if "error" in results[0] if results else {}:
-            return f"Error executing query: {results[0]['error']}\n\nThe query was: {sql_query}"
-        
-        # Format the results as a readable string
-        if not results:
-            return f"No results found for query: {sql_query}"
-        
-        result_str = "Results:\n"
-        for i, row in enumerate(results):
-            result_str += f"Row {i+1}: {row}\n"
-        
-        return f"Query executed: {sql_query}\n\n{result_str}"
+        # Execute the SQL query
+        try:
+            execution_start = time.time()
+            results = execute_sql_query(sql_query)
+            execution_end = time.time()
+            logger.info(f"Executed SQL query in {execution_end - execution_start:.2f} seconds")
+            
+            end_time = time.time()
+            logger.info(f"SQL Agent completed processing in {end_time - start_time:.2f} seconds")
+            
+            # Format the results
+            if "error" in results[0] if results else {}:
+                return f"Error executing query: {results[0]['error']}\n\nThe query was: {sql_query}"
+            
+            # Format the results as a readable string
+            if not results:
+                return f"No results found for query: {sql_query}"
+            
+            result_str = "Results:\n"
+            for i, row in enumerate(results):
+                result_str += f"Row {i+1}: {row}\n"
+            
+            return f"Query executed: {sql_query}\n\n{result_str}"
+        except Exception as e:
+            logger.error(f"SQL execution error: {str(e)}")
+            return f"SQL Query: {sql_query}\n\nError: {str(e)}"
     
     return sql_agent
 

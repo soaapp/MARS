@@ -1,3 +1,5 @@
+import time
+import logging
 from typing import Dict, List, Annotated, TypedDict, Union
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from langchain_ollama import ChatOllama
@@ -5,6 +7,13 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('MARS')
 
 # Define the state schema for our multi-agent system
 class AgentState(TypedDict):
@@ -15,6 +24,7 @@ class AgentState(TypedDict):
 
 # Initialize the LLM
 def get_llm(temperature=0):
+    logger.info(f"Initializing Llama4 with temperature {temperature}")
     return ChatOllama(model="llama4", temperature=temperature)
 
 # Create the master agent that will decide which data source to use

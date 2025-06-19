@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+import logging
 from typing import Dict, List, Annotated, TypedDict, Union, Any, Literal
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from langchain_ollama import ChatOllama
@@ -7,6 +9,13 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('MARS')
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,6 +33,7 @@ class AgentState(TypedDict):
 
 # Initialize the LLM
 def get_llm(temperature=0):
+    logger.info(f"Initializing Llama4 with temperature {temperature}")
     return ChatOllama(model="llama4", temperature=temperature)
 
 # Create the router agent that will decide which data source to use
@@ -45,10 +55,20 @@ def create_router_agent():
     
     return prompt | get_llm() | StrOutputParser()
 
-# Function to route to the appropriate agent
+# Function to route the query to the appropriate agent
 def route(state: AgentState) -> Dict[str, Any]:
-    router = create_router_agent()
-    source = router.invoke({"query": state["query"], "messages": state.get("messages", [])})
+    query = state["query"]
+    messages = state["messages"]
+    
+    logger.info(f"Routing query: {query}")
+    start_time = time.time()
+    
+    # Use the router agent to decide which data source to use
+    router_agent = create_router_agent()
+    source = router_agent.invoke({"query": query, "messages": messages})
+    
+    end_time = time.time()
+    logger.info(f"Router decided on source: {source} (took {end_time - start_time:.2f} seconds)")
     
     # Ensure the source is either 'qdrant' or 'sql'
     if source.lower().strip() not in ["qdrant", "sql"]:
@@ -101,12 +121,22 @@ def create_agent_graph():
     # Compile the graph
     return workflow.compile()
 
-# Function to run the agent graph
+# Function to run the master agent
 def run_master_agent(query: str, messages: List[BaseMessage] = None) -> Dict[str, Any]:
     if messages is None:
         messages = []
     
+    logger.info(f"Master agent received query: {query}")
+    start_time = time.time()
+    
+    # Create the agent graph
     graph = create_agent_graph()
+    
+    # Run the graph
     result = graph.invoke({"query": query, "messages": messages})
+    
+    end_time = time.time()
+    logger.info(f"Master agent completed processing in {end_time - start_time:.2f} seconds")
+    logger.info(f"Result source: {result['source']}")
     
     return result
