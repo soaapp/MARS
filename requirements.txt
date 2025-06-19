@@ -1,6 +1,8 @@
-langchain
-langgraph
-openai
-flask
-qdrant-client
-sqlite3
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-community>=0.1.0
+langgraph>=0.0.20
+flask>=2.0.0
+qdrant-client>=1.6.0
+python-dotenv>=1.0.0
+langchain-ollama>=0.0.1
