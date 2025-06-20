@@ -24,23 +24,22 @@ class AgentState(TypedDict):
 
 # Initialize the LLM
 def get_llm(temperature=0):
-    logger.info(f"Initializing Llama4 with temperature {temperature}")
-    return ChatOllama(model="llama4", temperature=temperature)
+    logger.info(f"Initializing Llama3.2 with temperature {temperature}")
+    return ChatOllama(
+        model="llama3.2", 
+        temperature=temperature,
+        timeout=30,  # 30 second timeout
+        stop=["\n\n"]  # Stop on double newline to encourage brevity
+    )
 
 # Create the master agent that will decide which data source to use
 def create_master_agent():
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content="""You are the Master Agent in a Multi-Agent RAG System. 
-        Your job is to analyze the user's query and determine which data source would be best to answer it: 
-        either 'qdrant' for document retrieval or 'sql' for structured database queries.
+        SystemMessage(content="""You are a Router Agent. Analyze the query and respond ONLY with 'sql' or 'qdrant'.
+        - 'sql': For queries about people, employees, records, database information, or any structured data
+        - 'qdrant': ONLY for queries about documents or knowledge base information
         
-        Respond with ONLY 'qdrant' or 'sql' based on the nature of the query.
-        
-        For example:
-        - If the query is about documents, reports, or unstructured information, respond with 'qdrant'
-        - If the query is about specific records, people, or structured data, respond with 'sql'
-        """),
-        MessagesPlaceholder(variable_name="messages"),
+        IMPORTANT: If the query mentions employees, people, or database records, ALWAYS use 'sql'."""),
         HumanMessage(content="{query}"),
     ])
     
