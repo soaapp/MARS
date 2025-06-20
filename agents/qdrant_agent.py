@@ -22,8 +22,8 @@ logger = logging.getLogger('MARS')
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from qdrant.client_setup import client, collection_name
 
-# Initialize embeddings model
-embeddings = OllamaEmbeddings(model="llama4")
+# Initialize embeddings
+embeddings = OllamaEmbeddings(model="llama3.2")
 
 # Function to search documents in Qdrant
 def search_documents(query: str, limit: int = 3) -> List[Dict[str, Any]]:
@@ -79,13 +79,21 @@ def create_qdrant_agent():
     
     # Create a prompt template for generating a response based on retrieved documents
     response_prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content="You are a helpful assistant that answers questions based on the provided documents."),
-        MessagesPlaceholder(variable_name="messages"),
-        ("human", "Based on the following documents, answer this question: {query}\n\nDocuments: {documents}"),
+        SystemMessage(content="""You are a Document Assistant. Answer based only on the retrieved documents. Be concise."""),
+        HumanMessage(content="""Query: {query}
+        
+        Documents:
+        {documents}
+        """),
     ])
     
     # Chain for generating response
-    response_chain = response_prompt | ChatOllama(model="llama4", temperature=0) | StrOutputParser()
+    response_chain = response_prompt | ChatOllama(
+        model="llama3.2", 
+        temperature=0,
+        timeout=30,  # 30 second timeout
+        stop=["\n\n"]  # Stop on double newline to encourage brevity
+    ) | StrOutputParser()
     
     def qdrant_agent(query: str, messages: List[BaseMessage] = None) -> str:
         if messages is None:

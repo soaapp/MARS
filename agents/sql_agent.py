@@ -57,22 +57,26 @@ def create_sql_agent():
     schema = get_table_schema()
     schema_str = "\n".join([f"Table: {table}\nColumns: {', '.join(columns)}" for table, columns in schema.items()])
     
+    # Create the prompt for SQL generation
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=f"""You are a SQL Agent that helps query a SQLite database.
-        Here is the schema of the database:
+        SystemMessage(content=f"""You are an SQL expert. Write a single SQLite query to answer the question.
+        Schema: 
+{schema_str}
         
-        {schema_str}
+        IMPORTANT: The database contains employee information in the 'people' table.
+        For queries about employees, ALWAYS use the people table.
         
-        Given a user query, generate a SQL query that will answer their question.
-        Then execute the query and return the results in a clear, readable format.
-        If there's an error, explain what went wrong and suggest a fix.
-        """),
-        MessagesPlaceholder(variable_name="messages"),
+        Return ONLY the SQL query with no explanations or formatting."""),
         HumanMessage(content="{query}"),
     ])
     
     # Chain for generating SQL
-    llm = ChatOllama(model="llama4", temperature=0)
+    llm = ChatOllama(
+        model="llama3.2", 
+        temperature=0,
+        timeout=30,  # 30 second timeout
+        stop=["\n\n"]  # Stop on double newline to encourage brevity
+    )
     sql_chain = prompt | llm | StrOutputParser()
     
     def sql_agent(query: str, messages: List[BaseMessage] = None) -> str:

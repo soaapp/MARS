@@ -33,48 +33,57 @@ class AgentState(TypedDict):
 
 # Initialize the LLM
 def get_llm(temperature=0):
-    logger.info(f"Initializing Llama4 with temperature {temperature}")
-    return ChatOllama(model="llama4", temperature=temperature)
+    logger.info(f"Initializing Llama3.2 with temperature {temperature}")
+    return ChatOllama(
+        model="llama3.2", 
+        temperature=temperature,
+        timeout=30,  # 30 second timeout
+        stop=["\n\n"]  # Stop on double newline to encourage brevity
+    )
 
 # Create the router agent that will decide which data source to use
 def create_router_agent():
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content="""You are the Router Agent in a Multi-Agent RAG System. 
-        Your job is to analyze the user's query and determine which data source would be best to answer it: 
-        either 'qdrant' for document retrieval or 'sql' for structured database queries.
+    # Instead of relying on the LLM for routing employee queries, let's use a rule-based approach
+    def router(query):
+        query_lower = query.lower()
+        # If query contains employee-related terms, always route to SQL
+        employee_terms = ['employee', 'employees', 'people', 'person', 'staff', 'worker', 'workers', 'team', 'member', 'members', 'list']
+        for term in employee_terms:
+            if term in query_lower:
+                logger.info(f"Rule-based routing detected employee term '{term}' - routing to SQL")
+                return "sql"
         
-        Respond with ONLY 'qdrant' or 'sql' based on the nature of the query.
+        # Otherwise use the LLM for routing
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content="""You are a Router Agent. Analyze the query and respond ONLY with 'sql' or 'qdrant'.
+            - 'sql': For queries about people, employees, records, database information, or any structured data
+            - 'qdrant': ONLY for queries about documents or knowledge base information"""),
+            HumanMessage(content="{query}"),
+        ])
         
-        For example:
-        - If the query is about documents, reports, or unstructured information, respond with 'qdrant'
-        - If the query is about specific records, people, or structured data, respond with 'sql'
-        """),
-        MessagesPlaceholder(variable_name="messages"),
-        HumanMessage(content="{query}"),
-    ])
+        llm = get_llm()
+        chain = prompt | llm | StrOutputParser()
+        result = chain.invoke({"query": query})
+        return result.strip().lower()
     
-    return prompt | get_llm() | StrOutputParser()
+    return router
+
 
 # Function to route the query to the appropriate agent
 def route(state: AgentState) -> Dict[str, Any]:
     query = state["query"]
-    messages = state["messages"]
     
     logger.info(f"Routing query: {query}")
     start_time = time.time()
     
-    # Use the router agent to decide which data source to use
-    router_agent = create_router_agent()
-    source = router_agent.invoke({"query": query, "messages": messages})
+    # Use the rule-based router to decide which data source to use
+    router_func = create_router_agent()
+    source = router_func(query)
     
     end_time = time.time()
     logger.info(f"Router decided on source: {source} (took {end_time - start_time:.2f} seconds)")
     
-    # Ensure the source is either 'qdrant' or 'sql'
-    if source.lower().strip() not in ["qdrant", "sql"]:
-        source = "qdrant"  # Default to qdrant if the response is unexpected
-    
-    return {"source": source.lower().strip()}
+    return {"source": source}
 
 # Function to call the SQL agent
 def call_sql_agent(state: AgentState) -> Dict[str, Any]:
