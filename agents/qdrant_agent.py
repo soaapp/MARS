@@ -1,11 +1,22 @@
 import os
 import sys
+import time
+import logging
 from typing import List, Dict, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_ollama import ChatOllama
-from langchain_community.embeddings import OllamaEmbeddings
 from langchain_core.output_parsers import StrOutputParser
+from langchain_community.embeddings import OllamaEmbeddings
+from qdrant_client.models import Distance, VectorParams
+from qdrant.client_setup import client, collection_name
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('MARS')
 
 # Add the parent directory to sys.path to import from qdrant module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,32 +27,43 @@ embeddings = OllamaEmbeddings(model="llama4")
 
 # Function to search documents in Qdrant
 def search_documents(query: str, limit: int = 3) -> List[Dict[str, Any]]:
-    try:
-        # Generate embeddings for the query
-        query_vector = embeddings.embed_query(query)
-        
-        # Search for similar documents in Qdrant
-        search_results = client.search(
-            collection_name=collection_name,
-            query_vector=query_vector,
-            limit=limit
-        )
-        
-        # Extract and return the results
-        results = []
-        for result in search_results:
-            payload = result.payload if hasattr(result, 'payload') else {}
-            score = result.score if hasattr(result, 'score') else 0.0
-            results.append({
-                "id": result.id,
-                "score": score,
-                "content": payload.get("content", ""),
-                "metadata": {k: v for k, v in payload.items() if k != "content"}
-            })
-        
-        return results
-    except Exception as e:
-        return [{"error": str(e)}]
+    logger.info(f"Searching documents for query: {query}")
+    start_time = time.time()
+    
+    # Get embeddings for the query
+    embedding_start = time.time()
+    query_vector = embeddings.embed_query(query)
+    embedding_end = time.time()
+    logger.info(f"Generated embeddings in {embedding_end - embedding_start:.2f} seconds")
+    
+    # Search in Qdrant
+    search_start = time.time()
+    search_results = client.search(
+        collection_name=collection_name,
+        query_vector=query_vector,
+        limit=limit
+    )
+    search_end = time.time()
+    logger.info(f"Searched Qdrant in {search_end - search_start:.2f} seconds, found {len(search_results)} results")
+    
+    # Format results
+    results = []
+    for result in search_results:
+        payload = result.payload if hasattr(result, 'payload') else {}
+        score = result.score if hasattr(result, 'score') else 0.0
+        results.append({
+            "id": result.id,
+            "score": score,
+            "content": payload.get("content", ""),
+            "metadata": {
+                "title": payload.get("metadata", {}).get("title", "Untitled"),
+                "source": payload.get("metadata", {}).get("source", "Unknown")
+            }
+        })
+    
+    end_time = time.time()
+    logger.info(f"Document search completed in {end_time - start_time:.2f} seconds")
+    return results
 
 # Create the Qdrant agent
 def create_qdrant_agent():
@@ -69,26 +91,33 @@ def create_qdrant_agent():
         if messages is None:
             messages = []
         
+        logger.info(f"Qdrant Agent processing query: {query}")
+        start_time = time.time()
+        
         # Search for relevant documents
-        documents = search_documents(query)
+        search_results = search_documents(query)
         
-        # Check for errors
-        if documents and "error" in documents[0]:
-            return f"Error searching documents: {documents[0]['error']}"
+        # If no results, return a message
+        if not search_results:
+            logger.info("No relevant documents found")
+            return "I couldn't find any relevant documents to answer your query."
         
-        # If no documents found
-        if not documents:
-            return "No relevant documents found for your query. Please try a different search term or approach."
+        # Format the documents for the prompt
+        documents = []
+        for i, doc in enumerate(search_results):
+            documents.append(f"Document {i+1}:\nTitle: {doc['metadata']['title']}\nSource: {doc['metadata']['source']}\nContent: {doc['content']}\nRelevance Score: {doc['score']}")
         
-        # Prepare context from retrieved documents
-        context = "\n\n".join([f"Document {i+1} (ID: {doc['id']}, Score: {doc['score']:.2f}):\n{doc['content']}" 
-                             for i, doc in enumerate(documents)])
+        documents_str = "\n\n".join(documents)
+        logger.info(f"Formatted {len(search_results)} documents for response generation")
         
-        # Generate response using the retrieved documents
-        response = response_chain.invoke({
-            "query": f"Based on the following documents, answer this question: {query}\n\nDocuments:\n{context}",
-            "messages": messages
-        })
+        # Generate response using the LLM
+        response_start = time.time()
+        response = response_chain.invoke({"query": query, "documents": documents_str})
+        response_end = time.time()
+        logger.info(f"Generated response in {response_end - response_start:.2f} seconds")
+        
+        end_time = time.time()
+        logger.info(f"Qdrant Agent completed processing in {end_time - start_time:.2f} seconds")
         
         return response
     
