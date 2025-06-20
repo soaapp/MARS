@@ -127,5 +127,5 @@ def add_document():
         return jsonify({'error': str(e)})
 
 if __name__ == '__main__':
-    logger.info("Starting MARS Flask application")
-    app.run(debug=True)
+    logger.info("Starting MARS Flask application on port 5001")
+    app.run(debug=True, port=5001)
