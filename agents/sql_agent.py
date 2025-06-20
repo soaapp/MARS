@@ -57,25 +57,64 @@ def create_sql_agent():
     schema = get_table_schema()
     schema_str = "\n".join([f"Table: {table}\nColumns: {', '.join(columns)}" for table, columns in schema.items()])
     
-    # Create the prompt for SQL generation
+    # Create the prompt for SQL generation with examples
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=f"""You are an SQL expert. Write a single SQLite query to answer the question.
-        Schema: 
+        
+        DATABASE SCHEMA:
 {schema_str}
         
-        IMPORTANT: The database contains employee information in the 'people' table.
-        For queries about employees, ALWAYS use the people table.
+        CRITICAL INSTRUCTIONS:
+        1. The database contains employee information in the 'people' table.
+        2. The 'people' table has EXACTLY these columns and NOTHING else: id (INTEGER), name (TEXT), role (TEXT).
+        3. There is NO department column, location column, or any other columns besides id, name, and role.
+        4. For ANY queries about employees, people, staff, or team members, you MUST use the people table.
+        5. NEVER reference columns that don't exist in the schema.
+        6. Return ONLY the SQL query with no explanations, markdown formatting, or code blocks.
+        7. End your query with a semicolon.
+        8. Keep your query simple and focused on the available columns.
+        9. IMPORTANT: Use appropriate WHERE clauses to filter results based on the query.
+        10. If the query mentions specific roles like 'Engineer', 'Manager', 'Developer', etc., use a WHERE clause to filter by that role.
         
-        Return ONLY the SQL query with no explanations or formatting."""),
+        EXAMPLES:
+        
+        Question: List all employees
+        SQL: SELECT * FROM people;
+        
+        Question: Who works as an Engineer?
+        SQL: SELECT * FROM people WHERE role = 'Engineer';
+        
+        Question: How many employees are there?
+        SQL: SELECT COUNT(*) as count FROM people;
+        
+        Question: List employees in the Engineering department
+        SQL: SELECT * FROM people WHERE role = 'Engineer';
+        
+        Question: Show me all staff members
+        SQL: SELECT * FROM people;
+        
+        Question: Who is in the company?
+        SQL: SELECT * FROM people;
+        
+        Question: List all engineers
+        SQL: SELECT * FROM people WHERE role = 'Engineer';
+        
+        Question: How many managers do we have?
+        SQL: SELECT COUNT(*) as count FROM people WHERE role = 'Manager';
+        
+        Question: Find employees with the name Alice
+        SQL: SELECT * FROM people WHERE name = 'Alice';
+        """),
         HumanMessage(content="{query}"),
     ])
     
-    # Chain for generating SQL
+    # Chain for generating SQL - using more precise parameters
     llm = ChatOllama(
         model="llama3.2", 
-        temperature=0,
-        timeout=30,  # 30 second timeout
-        stop=["\n\n"]  # Stop on double newline to encourage brevity
+        temperature=0,  # Zero temperature for deterministic output
+        timeout=30,     # 30 second timeout
+        stop=["\n\n", ";"],  # Stop on double newline or semicolon to get just the query
+        num_ctx=2048    # Ensure enough context for the schema
     )
     sql_chain = prompt | llm | StrOutputParser()
     
@@ -86,15 +125,81 @@ def create_sql_agent():
         logger.info(f"SQL Agent processing query: {query}")
         start_time = time.time()
         
-        # Generate SQL query
+        # Start timing for SQL generation
         sql_generation_start = time.time()
-        sql_query = sql_chain.invoke({"query": query, "messages": messages})
         
-        # Extract the SQL query from the response (assuming it's wrapped in ```sql ... ```)
-        if "```sql" in sql_query:
-            sql_query = sql_query.split("```sql")[1].split("```")[0].strip()
-        elif "```" in sql_query:
-            sql_query = sql_query.split("```")[1].split("```")[0].strip()
+        # Direct parsing approach for common queries
+        query_lower = query.lower()
+        
+        # Check if this is a query about specific roles
+        roles = {
+            'engineer': 'Engineer',
+            'manager': 'Manager',
+            'developer': 'Developer',
+            'designer': 'Designer'
+        }
+        
+        # Check if this is a query about counting employees
+        is_count_query = any(term in query_lower for term in ['how many', 'count', 'number of'])
+        
+        # Check if this is a query about specific roles
+        role_filter = None
+        for role_key, role_value in roles.items():
+            if role_key in query_lower:
+                role_filter = role_value
+                break
+        
+        # Generate appropriate SQL based on query type
+        if is_count_query and role_filter:
+            # Count of specific role
+            sql_query = f"SELECT COUNT(*) as count FROM people WHERE role = '{role_filter}';"
+            logger.info(f"Generated count query for role '{role_filter}'")
+        elif is_count_query:
+            # Count of all employees
+            sql_query = "SELECT COUNT(*) as count FROM people;"
+            logger.info("Generated count query for all employees")
+        elif role_filter:
+            # Filter by specific role
+            sql_query = f"SELECT * FROM people WHERE role = '{role_filter}';"
+            logger.info(f"Generated filter query for role '{role_filter}'")
+        else:
+            # Use the LLM for more complex queries
+            sql_query = sql_chain.invoke({"query": query, "messages": messages})
+            
+            # Extract the SQL query from the response
+            # First, try to extract from code blocks if present
+            if "```sql" in sql_query:
+                sql_query = sql_query.split("```sql")[1].split("```")[0].strip()
+            elif "```" in sql_query:
+                sql_query = sql_query.split("```")[1].split("```")[0].strip()
+            
+            # Clean up any remaining explanation text
+            sql_query = sql_query.strip()
+            
+            # Remove any text before SELECT/WITH/etc. and after the semicolon
+            sql_keywords = ["SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"]
+            for keyword in sql_keywords:
+                if keyword in sql_query.upper():
+                    sql_query = sql_query[sql_query.upper().find(keyword):]
+                    break
+            
+            # If there's a semicolon in the middle, keep only up to the first semicolon
+            if ';' in sql_query:
+                sql_query = sql_query.split(';')[0] + ';'
+            # Ensure the query ends with a semicolon
+            elif not sql_query.endswith(';'):
+                sql_query += ';'
+                
+            logger.info(f"LLM generated SQL query: {sql_query}")
+        
+        # If we still don't have a WHERE clause but should have one based on the query
+        if role_filter and 'WHERE' not in sql_query.upper():
+            if 'FROM people' in sql_query:
+                parts = sql_query.split('FROM people')
+                sql_query = f"{parts[0]} FROM people WHERE role = '{role_filter}';"
+                logger.info(f"Added missing WHERE clause for role '{role_filter}'")
+        
+        logger.info(f"Final SQL query: {sql_query}")
         
         sql_generation_end = time.time()
         logger.info(f"Generated SQL query in {sql_generation_end - sql_generation_start:.2f} seconds: {sql_query}")
